@@ -15,7 +15,7 @@ responder = LLMResponder()
 nfz_queues = NFZClient()
 
 
-@app.get("/zapytanie")
+@app.post("/zapytanie")
 async def ask_assistant(question: str):
     try:
         criteria = await extractor.extract_criteria(question)
@@ -24,10 +24,20 @@ async def ask_assistant(question: str):
         raise HTTPException(status_code=500, detail="Błąd analizy pytania przez AI")
 
     benefit_search = criteria.get("benefit", "")
-    province_name = criteria.get("province", "")
+    province_name = criteria.get("province", None)
+
+    if not province_name:
+        logger.warning("Nie podano województwa, wyszukuje automatycznie")
+        province_name = ""
+
+    city_name = criteria.get("city", None)
+
+    if not city_name:
+        logger.info("Nie podano miejscowości, wyszukuję automatycznie")
+        city_name = ""
 
     try:
-        queues = await nfz_queues.get_queues(benefit_search, province_name)
+        queues = await nfz_queues.get_queues(benefit_search, province_name, city_name)
     except Exception as e:
         logger.error(f"NFZ Queues Error: {e}")
         raise HTTPException(status_code=502, detail="Błąd pobierania kolejek z NFZ")
@@ -44,5 +54,9 @@ async def ask_assistant(question: str):
 
     return {
         "ai_answer": final_answer,
-        "details": {"benefit": benefit_search, "province": province_name},
+        "details": {
+            "benefit": benefit_search,
+            "province": province_name,
+            "city": city_name,
+        },
     }

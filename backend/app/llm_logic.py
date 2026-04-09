@@ -19,6 +19,11 @@ class SearchCriteria(BaseModel):
         description="Nazwa specjalizacji medycznej lub badania "
         "(np. kardiolog, rtg, okulista)"
     )
+
+    city: str = Field(
+        description="Nazwa miejscowości w Polsce " "(np. Warszawa, Kraków, Gdańsk)"
+    )
+
     province: str = Field(
         description="Nazwa województwa w Polsce " "(np. mazowieckie, śląskie)"
     )
@@ -39,7 +44,9 @@ class LLMExtractor:
                     "system",
                     """Jesteś precyzyjnym parserem danych.
                     Twoim zadaniem jest wyciągnięcie informacji
-                    o świadczeniu medycznym i województwie.
+                    o świadczeniu medycznym, województwie i miejscowości.
+                    W przypadku braku jednej z tych informacji,
+                    zwróć pusty string w adekwatnym polu.
                     {format_instructions}""",
                 ),
                 ("user", "{question}"),
@@ -68,7 +75,7 @@ class LLMExtractor:
 
         except Exception as e:
             logger.error(f"Krytyczny błąd ekstrakcji: {e}")
-            return {"benefit": question, "province": ""}
+            return {"benefit": question, "province": "", "city": ""}
 
 
 class LLMResponder:
@@ -85,16 +92,17 @@ class LLMResponder:
                     "system",
                     """Jesteś pomocnym asystentem NFZ.
                     Twoim celem jest uprzejme poinformowanie pacjenta o terminach.
-            ZASADY:
-            1. Odpowiadaj miło, ale bądź zwięzły.
-            2. Dla każdej placówki NAJPIERW podaj nazwę świadczenia
-            ('benefit' w danych).
-            3. Format: [Nazwa Benefitu] | Placówka | Adres |
-            Termin | nr Telefonu | (Aktualizacja: Data)
-            4. NIE pisz o telefonie, jeśli go nie ma w danych.
-            5. NIE pisz o dacie aktualizacji, jeśli jej nie ma.
-            6. Jeśli brak danych, odpisz uprzejmie,
-            że obecnie nie znaleziono wolnych terminów.""",
+                    ZASADY:
+                    1. Odpowiadaj miło, ale bądź zwięzły.
+                    2. Dla każdej placówki NAJPIERW podaj nazwę świadczenia
+                    ('benefit' w danych).
+                    3. Sortuj odpowiedź według daty oraz kategorii świadczeń
+                    (twórz sekcje jeżeli występuje więcej niż
+                    jedno świadczenie o tej samej nazwie).
+                    4. NIE pisz o telefonie, jeśli go nie ma w danych.
+                    5. NIE pisz o dacie aktualizacji, jeśli jej nie ma.
+                    6. Jeśli brak danych, odpisz uprzejmie,
+                    że obecnie nie znaleziono wolnych terminów.""",
                 ),
                 ("user", "Pacjent pyta: {question}\nDane z NFZ:\n{context}"),
             ]

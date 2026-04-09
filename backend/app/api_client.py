@@ -23,22 +23,27 @@ PROVINCES = {
 class NFZClient:
     BASE_URL = "https://api.nfz.gov.pl/app-itl-api/queues"
 
-    async def get_queues(self, user_input: str, province: str):
-        print(f"Przetwarzanie zapytania: '{user_input}' dla województwa: '{province}'")
+    async def get_queues(self, user_input: str, province: str, city: str):
+        print(
+            f"""Przetwarzanie zapytania: '{user_input}'
+            dla województwa: '{province}' i miejscowości: {city}"""
+        )
 
         province_code = PROVINCES.get(province.lower())
+        locality = city.strip().lower()
 
         if not province_code:
             print(f"Nieznany kod województwa: {province}")
             return "Nieznane województwo"
 
-        benefit = user_input[:3]
+        benefit = user_input[:5]
 
         params = {
             "format": "json",
             "case": 1,
             "benefit": benefit,
             "province": province_code,
+            "locality": locality,
             "page": 1,
             "limit": 10,
         }
