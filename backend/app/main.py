@@ -1,6 +1,8 @@
 import logging
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
 from .api_client import NFZClient
 from .llm_logic import LLMExtractor, LLMResponder
@@ -15,15 +17,31 @@ responder = LLMResponder()
 nfz_queues = NFZClient()
 
 
+class UserRequest(BaseModel):
+    question: str
+    user_ip: str = None
+
+
 @app.post("/zapytanie")
-async def ask_assistant(question: str):
+async def ask_assistant(request: UserRequest):
     try:
-        criteria = await extractor.extract_criteria(question)
+        criteria = await extractor.extract_criteria(request.question)
     except Exception as e:
-        logger.error(f"LLM Extraction Error: {e}")
-        raise HTTPException(status_code=500, detail="Błąd analizy pytania przez AI")
+        logger.warning(f"LLM Extraction Error: {e}")
+        return StreamingResponse(
+            responder.generate_answer(
+                request.question + " (Błąd ekstrakcji danych)", []
+            ),
+            media_type="text/plain",
+        )
 
     benefit_search = criteria.get("benefit", "")
+
+    if not benefit_search:
+        return StreamingResponse(
+            responder.generate_answer(request.question, []), media_type="text/plain"
+        )
+
     province_name = criteria.get("province", None)
 
     if not province_name:
@@ -40,23 +58,13 @@ async def ask_assistant(question: str):
         queues = await nfz_queues.get_queues(benefit_search, province_name, city_name)
     except Exception as e:
         logger.error(f"NFZ Queues Error: {e}")
-        raise HTTPException(status_code=502, detail="Błąd pobierania kolejek z NFZ")
+        return StreamingResponse(
+            responder.generate_answer(
+                request.question + " (Błąd pobierania kolejek)", []
+            ),
+            media_type="text/plain",
+        )
 
-    try:
-        final_answer = await responder.generate_answer(question, queues)
-    except Exception as e:
-        logger.error(f"LLM Responder Error: {e}")
-        return {
-            "ai_answer": "Pobrałem dane, ale wystąpił "
-            "błąd przy generowaniu odpowiedzi.",
-            "raw_data": queues[:3],
-        }
-
-    return {
-        "ai_answer": final_answer,
-        "details": {
-            "benefit": benefit_search,
-            "province": province_name,
-            "city": city_name,
-        },
-    }
+    return StreamingResponse(
+        responder.generate_answer(request.question, queues), media_type="text/plain"
+    )

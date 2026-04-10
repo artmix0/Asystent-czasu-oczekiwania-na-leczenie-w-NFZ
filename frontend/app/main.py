@@ -1,12 +1,36 @@
 import requests
 import streamlit as st
+from streamlit_local_storage import LocalStorage
 
 st.set_page_config(
     page_title="Asystent czasu oczekiwania na leczenie w NFZ", page_icon="🏥"
 )
 
+
+@st.cache_resource
+def get_chat_history():
+    return []
+
+
+def get_user_ip():
+    headers = st.context.headers
+
+    if "x-forwarded-for" in headers:
+        return headers["x-forwarded-for"].split(",")[0]
+
+    return headers.get("remote-addr") or headers.get("host")
+
+
 if "messages" not in st.session_state:
-    st.session_state.messages = []
+    st.session_state.messages = get_chat_history()
+
+local_storage = LocalStorage()
+
+saved_geo = local_storage.getItem("geo_permission") == "true"
+
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
 
 with st.sidebar:
     st.header("Ustawienia")
@@ -14,39 +38,57 @@ with st.sidebar:
         st.session_state.messages = []
         st.rerun()
 
-    geo = st.toggle("Zezwolenie na użycie danych w celu lokalizacji", value=False)
+    geo = st.toggle(
+        "Zezwolenie na użycie danych w celu lokalizacji",
+        value="true" if saved_geo else False,
+        help="Dzięki temu asystent będzie mógł automatycznie wykrywać "
+        "Twoją lokalizację i dostarczać bardziej precyzyjne informacje "
+        "o kolejkach w Twojej okolicy.",
+        key="geo_toggle",
+    )
 
-    if geo:
-        st.info(
-            "Dzięki temu asystent będzie mógł automatycznie "
-            "wykrywać Twoją lokalizację i dostarczać bardziej "
-            "precyzyjne informacje o kolejkach w Twojej okolicy."
-        )
-    else:
-        st.info(
-            "Nie udostępniając danych lokalizacyjnych, nadal "
-            "możesz zadawać pytania, ale wyniki mogą być mniej "
-            "precyzyjne, zwłaszcza jeśli nie podasz województwa "
-            "lub miejscowości w swoim pytaniu."
-        )
-
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+if geo:
+    local_storage.setItem("geo_permission", "true")
+else:
+    local_storage.setItem("geo_permission", "false")
 
 if prompt := st.chat_input("Np. Gdzie znajdę kardiologa w Poznaniu?"):
     st.chat_message("user").markdown(prompt)
     st.session_state.messages.append({"role": "user", "content": prompt})
 
     with st.chat_message("assistant"):
+        placeholder = st.empty()
+        final_response = ""
+
         with st.spinner("Analizuję Twoje pytanie..."):
-            response = requests.post(
-                "http://backend:8000/zapytanie", params={"question": prompt}, timeout=15
-            )
-            final_response = response.json().get(
-                "ai_answer", "Nie udało się uzyskać odpowiedzi."
-            )
-            st.markdown(final_response)
+            user_ip = get_user_ip() if geo else None
+            payload = {"question": prompt}
+            if user_ip:
+                payload["user_ip"] = user_ip
+
+            try:
+                response = requests.post(
+                    "http://backend:8000/zapytanie",
+                    json=payload,
+                    timeout=15,
+                    stream=True,
+                )
+
+                for chunk in response.iter_content(
+                    chunk_size=None, decode_unicode=True
+                ):
+                    if chunk:
+                        final_response += chunk
+                        placeholder.markdown(final_response + "▌")
+
+                placeholder.markdown(final_response)
+
+            except requests.exceptions.RequestException as e:
+                st.error(f"Błąd serwera: {response.status_code} {e}")
+                final_response = "Nie udało się uzyskać odpowiedzi."
+            except Exception as e:
+                st.error(f"Błąd połączenia: {e}")
+                final_response = "Nie udało się połączyć z serwerem."
 
     # 3. Zapisujemy odpowiedź asystenta
     st.session_state.messages.append({"role": "assistant", "content": final_response})

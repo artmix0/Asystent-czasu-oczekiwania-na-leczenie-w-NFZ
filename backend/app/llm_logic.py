@@ -47,6 +47,8 @@ class LLMExtractor:
                     o świadczeniu medycznym, województwie i miejscowości.
                     W przypadku braku jednej z tych informacji,
                     zwróć pusty string w adekwatnym polu.
+                    Poprawiaj błędy ortograficzne i literówki użytkownika
+                    aby dopasować je do polskiego języka.
                     {format_instructions}""",
                 ),
                 ("user", "{question}"),
@@ -102,7 +104,10 @@ class LLMResponder:
                     4. NIE pisz o telefonie, jeśli go nie ma w danych.
                     5. NIE pisz o dacie aktualizacji, jeśli jej nie ma.
                     6. Jeśli brak danych, odpisz uprzejmie,
-                    że obecnie nie znaleziono wolnych terminów.""",
+                    że obecnie nie znaleziono wolnych terminów.
+                    7. NIE podawaj informacji spoza danych NFZ.
+                    8. W przypadku braku danych o beneficie poproś
+                    o doprecyzowanie pytania.""",
                 ),
                 ("user", "Pacjent pyta: {question}\nDane z NFZ:\n{context}"),
             ]
@@ -111,37 +116,32 @@ class LLMResponder:
         self.chain = self.prompt | self.model | StrOutputParser()
 
     async def generate_answer(self, question: str, nfz_data: list):
-        if not nfz_data:
-            return (
-                "Dzień dobry! Przykro mi, ale nie znalazłem o"
-                "becnie żadnych wolnych terminów dla wskazanego świadczenia."
-            )
-
-        simplified_data = []
-        for d in nfz_data:
-            print(f"Przetwarzanie rekordu NFZ: {d}")
-            attr = d.get("attributes", {})
-            dates = attr.get("dates", {})
-
-            simplified_data.append(
-                {
-                    "benefit": attr.get("benefit"),
-                    "miejsce": attr.get("place"),
-                    "placowka": attr.get("provider"),
-                    "adres": f"{attr.get('address')}, {attr.get('locality')}",
-                    "phone": attr.get("phone"),
-                    "date": dates.get("date"),
-                    "date-situation-as-at": dates.get("date-situation-as-at"),
-                }
-            )
+        try:
+            simplified_data = []
+            for d in nfz_data:
+                attr = d.get("attributes", {})
+                dates = attr.get("dates", {})
+                simplified_data.append(
+                    {
+                        "benefit": attr.get("benefit"),
+                        "miejsce": attr.get("place"),
+                        "placowka": attr.get("provider"),
+                        "adres": f"{attr.get('address')}, {attr.get('locality')}",
+                        "phone": attr.get("phone"),
+                        "date": dates.get("date"),
+                    }
+                )
+        except Exception as e:
+            logger.warning(f"Błąd podczas upraszczania danych NFZ: {e}")
+            simplified_data = nfz_data
 
         try:
-            return await self.chain.ainvoke(
+            async for chunk in self.chain.astream(
                 {"question": question, "context": str(simplified_data)}
-            )
+            ):
+                content = getattr(chunk, "content", str(chunk))
+                if content:
+                    yield content
         except Exception as e:
             logger.error(f"Responder Error: {e}")
-            return (
-                "Pobrałem dane z NFZ, ale mam problem "
-                "z ich przetworzeniem. Spróbuj za chwilę."
-            )
+            yield "Wystąpił problem podczas generowania odpowiedzi."
