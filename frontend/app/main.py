@@ -44,7 +44,8 @@ if geo:
 else:
     local_storage.setItem("geo_permission", "false")
 
-loc = get_geolocation() if geo else None
+loc = get_geolocation() if geo or saved_geo else None
+print(loc)
 
 if prompt := st.chat_input("Np. Gdzie znajdę kardiologa w Poznaniu?"):
     st.chat_message("user").markdown(prompt)
@@ -58,7 +59,7 @@ if prompt := st.chat_input("Np. Gdzie znajdę kardiologa w Poznaniu?"):
             payload = {"question": prompt}
 
             if loc:
-                payload["localization"] = loc
+                payload["localization"] = loc.get("coords")
 
             try:
                 response = requests.post(

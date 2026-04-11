@@ -2,10 +2,13 @@ import logging
 
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
+from geopy.geocoders import Nominatim
 from pydantic import BaseModel
 
 from .api_client import NFZClient
 from .llm_logic import LLMExtractor, LLMResponder
+
+geolocator = Nominatim(user_agent="nfz_assistant")
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -28,6 +31,21 @@ class GenerateAnswerRequest(BaseModel):
     loc_data: dict = None
 
 
+def get_geolocation_reverse(lat: float, lon: float):
+    try:
+        location = geolocator.reverse(f"{lat}, {lon}", language="pl")
+        if location and location.raw and "address" in location.raw:
+            address = location.raw["address"]
+            logger.info(address)
+            return {
+                "city": address.get("city", "") or address.get("village", ""),
+                "province": address.get("state", "").replace("województwo", "").strip(),
+            }
+    except Exception as e:
+        logger.error(f"Błąd podczas geolokalizacji: {e}")
+    return None
+
+
 @app.post("/zapytanie")
 async def ask_assistant(request: UserRequest):
     try:
@@ -41,6 +59,17 @@ async def ask_assistant(request: UserRequest):
             media_type="text/plain",
         )
 
+    if request.localization:
+        logger.info(request.localization)
+        try:
+            loc_info = get_geolocation_reverse(
+                request.localization.get("latitude"),
+                request.localization.get("longitude"),
+            )
+            logger.info(f"Zidentyfikowana lokalizacja: {loc_info}")
+        except Exception as e:
+            logger.error(f"Błąd podczas geolokalizacji: {e}")
+
     benefit_search = criteria.get("benefit", "")
 
     if not benefit_search:
@@ -53,11 +82,14 @@ async def ask_assistant(request: UserRequest):
     if not province_name:
         logger.warning("Nie podano województwa, wyszukuje automatycznie")
 
+        province_name = loc_info.get("province") if loc_info else ""
+
     city_name = criteria.get("city", None)
 
     if not city_name:
         logger.info("Nie podano miejscowości, wyszukuję automatycznie")
-        city_name = ""
+
+        city_name = loc_info.get("city") if loc_info else ""
 
     try:
         queues = await nfz_queues.get_queues(benefit_search, province_name, city_name)
