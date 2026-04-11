@@ -19,7 +19,13 @@ nfz_queues = NFZClient()
 
 class UserRequest(BaseModel):
     question: str
-    user_ip: str = None
+    localization: dict = None
+
+
+class GenerateAnswerRequest(BaseModel):
+    question: str
+    nfz_data: list
+    loc_data: dict = None
 
 
 @app.post("/zapytanie")
@@ -27,7 +33,7 @@ async def ask_assistant(request: UserRequest):
     try:
         criteria = await extractor.extract_criteria(request.question)
     except Exception as e:
-        logger.warning(f"LLM Extraction Error: {e}")
+        logger.error(f"LLM Extraction Error: {e}")
         return StreamingResponse(
             responder.generate_answer(
                 request.question + " (Błąd ekstrakcji danych)", []
@@ -46,7 +52,6 @@ async def ask_assistant(request: UserRequest):
 
     if not province_name:
         logger.warning("Nie podano województwa, wyszukuje automatycznie")
-        province_name = ""
 
     city_name = criteria.get("city", None)
 
@@ -66,5 +71,12 @@ async def ask_assistant(request: UserRequest):
         )
 
     return StreamingResponse(
-        responder.generate_answer(request.question, queues), media_type="text/plain"
+        responder.generate_answer(
+            GenerateAnswerRequest(
+                question=request.question,
+                nfz_data=queues,
+                loc_data=request.localization,
+            )
+        ),
+        media_type="text/plain",
     )

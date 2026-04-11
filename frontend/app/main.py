@@ -1,5 +1,6 @@
 import requests
 import streamlit as st
+from streamlit_js_eval import get_geolocation
 from streamlit_local_storage import LocalStorage
 
 st.set_page_config(
@@ -10,15 +11,6 @@ st.set_page_config(
 @st.cache_resource
 def get_chat_history():
     return []
-
-
-def get_user_ip():
-    headers = st.context.headers
-
-    if "x-forwarded-for" in headers:
-        return headers["x-forwarded-for"].split(",")[0]
-
-    return headers.get("remote-addr") or headers.get("host")
 
 
 if "messages" not in st.session_state:
@@ -52,6 +44,8 @@ if geo:
 else:
     local_storage.setItem("geo_permission", "false")
 
+loc = get_geolocation() if geo else None
+
 if prompt := st.chat_input("Np. Gdzie znajdę kardiologa w Poznaniu?"):
     st.chat_message("user").markdown(prompt)
     st.session_state.messages.append({"role": "user", "content": prompt})
@@ -61,10 +55,10 @@ if prompt := st.chat_input("Np. Gdzie znajdę kardiologa w Poznaniu?"):
         final_response = ""
 
         with st.spinner("Analizuję Twoje pytanie..."):
-            user_ip = get_user_ip() if geo else None
             payload = {"question": prompt}
-            if user_ip:
-                payload["user_ip"] = user_ip
+
+            if loc:
+                payload["localization"] = loc
 
             try:
                 response = requests.post(

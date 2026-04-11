@@ -29,6 +29,12 @@ class SearchCriteria(BaseModel):
     )
 
 
+class GenerateAnswerRequest(BaseModel):
+    question: str
+    nfz_data: list
+    loc_data: dict = None
+
+
 class LLMExtractor:
     def __init__(self):
         self.model = ChatGroq(
@@ -46,7 +52,7 @@ class LLMExtractor:
                     Twoim zadaniem jest wyciągnięcie informacji
                     o świadczeniu medycznym, województwie i miejscowości.
                     W przypadku braku jednej z tych informacji,
-                    zwróć pusty string w adekwatnym polu.
+                    zwróć None w adekwatnym polu.
                     Poprawiaj błędy ortograficzne i literówki użytkownika
                     aby dopasować je do polskiego języka.
                     {format_instructions}""",
@@ -115,10 +121,10 @@ class LLMResponder:
 
         self.chain = self.prompt | self.model | StrOutputParser()
 
-    async def generate_answer(self, question: str, nfz_data: list):
+    async def generate_answer(self, request: GenerateAnswerRequest):
         try:
             simplified_data = []
-            for d in nfz_data:
+            for d in request.nfz_data:
                 attr = d.get("attributes", {})
                 dates = attr.get("dates", {})
                 simplified_data.append(
@@ -128,16 +134,22 @@ class LLMResponder:
                         "placowka": attr.get("provider"),
                         "adres": f"{attr.get('address')}, {attr.get('locality')}",
                         "phone": attr.get("phone"),
-                        "date": dates.get("date"),
+                        "pierwszy termin": dates.get("date"),
+                        "aktualizacja": attr.get("updated_at"),
                     }
                 )
         except Exception as e:
             logger.warning(f"Błąd podczas upraszczania danych NFZ: {e}")
-            simplified_data = nfz_data
+            simplified_data = request.nfz_data
+
+        try:
+            simplified_data.append({"ip_info": request.loc_data})
+        except Exception as e:
+            logger.warning(f"Błąd podczas dodawania danych geolokalizacyjnych: {e}")
 
         try:
             async for chunk in self.chain.astream(
-                {"question": question, "context": str(simplified_data)}
+                {"question": request.question, "context": str(simplified_data)}
             ):
                 content = getattr(chunk, "content", str(chunk))
                 if content:
