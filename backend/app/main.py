@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 from fastapi import FastAPI
@@ -38,12 +39,26 @@ async def ask_assistant(request: UserRequest):
             "Proszę spróbować ponownie."
         )
 
+    async def info_stream(text: str):
+        yield text
+
     try:
         criteria = await extractor.extract_criteria(request.question)
         benefit = criteria.get("benefit")
         city_name = criteria.get("city")
         province_name = criteria.get("province")
         needs_location = criteria.get("needs_location")
+
+        if not city_name and not request.localization:
+            return StreamingResponse(
+                info_stream(
+                    "Wykryłem, że szukasz placówek w swojej okolicy, "
+                    "ale nie mam dostępu do Twoich współrzędnych. "
+                    "Proszę, włącz lokalizację w ustawieniach "
+                    "przeglądarki lub wpisz nazwę miasta."
+                ),
+                media_type="text/plain",
+            )
 
         loc_info = None
         if request.localization:
@@ -60,7 +75,7 @@ async def ask_assistant(request: UserRequest):
             origin_city = city_name or (loc_info.get("city") if loc_info else None)
             logger.info(f"Szukanie lokalne wokół: {origin_city}")
 
-            city_loc = geolocator.get_city_coords(origin_city)
+            city_loc = await asyncio.to_thread(geolocator.get_city_coords, origin_city)
             province_name = geolocator.get_geolocation_reverse(
                 city_loc[0], city_loc[1]
             )["province"]
