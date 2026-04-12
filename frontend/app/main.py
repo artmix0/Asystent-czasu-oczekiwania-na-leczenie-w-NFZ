@@ -1,7 +1,13 @@
+import logging
+
+import httpx
 import requests
 import streamlit as st
 from streamlit_js_eval import get_geolocation
 from streamlit_local_storage import LocalStorage
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 st.set_page_config(
     page_title="Asystent czasu oczekiwania na leczenie w NFZ", page_icon="🏥"
@@ -78,12 +84,18 @@ if prompt := st.chat_input("Np. Gdzie znajdę kardiologa w Poznaniu?"):
 
                 placeholder.markdown(final_response)
 
+            except httpx.HTTPStatusError as e:
+                st.error(f"Błąd NFZ (Kod: {e.response.status_code}): {e}")
+                logger.error(f"Status błędu: {e.response.status_code}")
+            except httpx.RequestError as e:
+                st.error(f"Błąd połączenia z API: {e}")
+                logger.error(f"Nie udało się wysłać żądania: {e}")
+            except Exception as e:
+                st.error(f"Wystąpił nieoczekiwany błąd: {e}")
+                logger.error(f"Błąd: {e}")
             except requests.exceptions.RequestException as e:
                 st.error(f"Błąd serwera: {response.status_code} {e}")
                 final_response = "Nie udało się uzyskać odpowiedzi."
-            except Exception as e:
-                st.error(f"Błąd połączenia: {e}")
-                final_response = "Nie udało się połączyć z serwerem."
 
     # 3. Zapisujemy odpowiedź asystenta
     st.session_state.messages.append({"role": "assistant", "content": final_response})

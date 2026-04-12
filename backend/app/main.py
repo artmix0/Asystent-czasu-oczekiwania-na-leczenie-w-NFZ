@@ -2,13 +2,11 @@ import logging
 
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
-from geopy.geocoders import Nominatim
 from pydantic import BaseModel
 
 from .api_client import NFZClient
+from .geolocation import Geolocator
 from .llm_logic import LLMExtractor, LLMResponder
-
-geolocator = Nominatim(user_agent="nfz_assistant")
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -18,6 +16,7 @@ app = FastAPI()
 extractor = LLMExtractor()
 responder = LLMResponder()
 nfz_queues = NFZClient()
+geolocator = Geolocator()
 
 
 class UserRequest(BaseModel):
@@ -27,23 +26,8 @@ class UserRequest(BaseModel):
 
 class GenerateAnswerRequest(BaseModel):
     question: str
-    nfz_data: list
+    nfz_data: dict | list
     loc_data: dict = None
-
-
-def get_geolocation_reverse(lat: float, lon: float):
-    try:
-        location = geolocator.reverse(f"{lat}, {lon}", language="pl")
-        if location and location.raw and "address" in location.raw:
-            address = location.raw["address"]
-            logger.info(address)
-            return {
-                "city": address.get("city", "") or address.get("village", ""),
-                "province": address.get("state", "").replace("województwo", "").strip(),
-            }
-    except Exception as e:
-        logger.error(f"Błąd podczas geolokalizacji: {e}")
-    return None
 
 
 @app.post("/zapytanie")
@@ -62,7 +46,7 @@ async def ask_assistant(request: UserRequest):
     if request.localization:
         logger.info(request.localization)
         try:
-            loc_info = get_geolocation_reverse(
+            loc_info = geolocator.get_geolocation_reverse(
                 request.localization.get("latitude"),
                 request.localization.get("longitude"),
             )
@@ -101,6 +85,23 @@ async def ask_assistant(request: UserRequest):
             ),
             media_type="text/plain",
         )
+
+    logger.info(queues)
+
+    if not any(queues.values()):
+        logger.info(f"Brak wyników w {city_name}. Przeszukuję promień 50km.")
+
+        provinces_list = geolocator.get_nearby_provinces(city_name)
+
+        queues = await nfz_queues.get_queues(benefit_search, provinces_list)
+
+        cascade_response = geolocator.find_nearby_cascade(
+            city_name=city_name, all_providers=queues, max_radius_km=50
+        )
+
+        if cascade_response.get("results"):
+            queues = cascade_response["results"]
+            logger.info(f"Znaleziono wyniki w promieniu 50km {queues}")
 
     return StreamingResponse(
         responder.generate_answer(

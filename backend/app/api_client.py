@@ -1,3 +1,7 @@
+import asyncio
+import logging
+import math
+
 import httpx
 
 PROVINCES = {
@@ -19,17 +23,26 @@ PROVINCES = {
     "zachodniopomorskie": "16",
 }
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 
 class NFZClient:
     BASE_URL = "https://api.nfz.gov.pl/app-itl-api/queues"
 
-    async def get_queues(self, user_input: str, province: str, city: str):
+    async def get_queues(self, user_input: str, province: str | list, city: str = ""):
         print(
             f"""Przetwarzanie zapytania: '{user_input}'
             dla województwa: '{province}' i miejscowości: {city}"""
         )
 
-        province_code = PROVINCES.get(province.lower())
+        if isinstance(province, str):
+            province_code = PROVINCES.get(province.lower())
+        else:
+            province_code = []
+            for prov in province:
+                province_code.append(PROVINCES.get(prov.lower()))
+
         locality = city.strip().lower()
 
         if not province_code:
@@ -38,27 +51,51 @@ class NFZClient:
 
         benefit = user_input[:5]
 
+        if isinstance(province_code, str):
+            province_code = [province_code]
+
+        async with httpx.AsyncClient() as client:
+            tasks = [
+                self.fetch_province_data(client, prov, benefit, locality)
+                for prov in province_code
+            ]
+
+            responses = await asyncio.gather(*tasks)
+
+            final_results = {prov: res for prov, res in responses}
+
+        return final_results
+
+    async def fetch_province_data(self, client, prov, benefit, locality):
         params = {
             "format": "json",
             "case": 1,
             "benefit": benefit,
-            "province": province_code,
+            "province": prov,
             "locality": locality,
             "page": 1,
-            "limit": 10,
+            "limit": 25,
         }
+        try:
+            res = await client.get(self.BASE_URL, params=params, timeout=5.0)
+            res.raise_for_status()
+            data = res.json()
+            results = data.get("data", [])
+            count = data.get("meta", {}).get("count", 0)
 
-        async with httpx.AsyncClient() as client:
-            try:
-                response = await client.get(self.BASE_URL, params=params, timeout=10.0)
-                response.raise_for_status()
-                data = response.json()
-
-                print(f"Otrzymano dane z NFZ: {data}")
-
-                results = [data for data in data.get("data", [])]
-
-                return results
-            except Exception as e:
-                print(f"Błąd NFZ: {e}")
-                return []
+            if count > 25:
+                total_pages = min(math.ceil(count / 25), 5)
+                for i in range(2, total_pages + 1):
+                    params["page"] = i
+                    try:
+                        p_res = await client.get(
+                            self.BASE_URL, params=params, timeout=5.0
+                        )
+                        p_res.raise_for_status()
+                        results.extend(p_res.json().get("data", []))
+                    except Exception:
+                        break
+            return prov, results
+        except Exception as e:
+            logger.error(f"Błąd dla {prov}: {e}")
+            return prov, []

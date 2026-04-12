@@ -104,7 +104,8 @@ class LLMResponder:
                     1. Odpowiadaj miło, ale bądź zwięzły.
                     2. Dla każdej placówki NAJPIERW podaj nazwę świadczenia
                     ('benefit' w danych).
-                    3. Sortuj odpowiedź według daty oraz kategorii świadczeń
+                    3. Sortuj odpowiedź według daty, odległości (jesli podana)
+                    oraz kategorii świadczeń
                     (twórz sekcje jeżeli występuje więcej niż
                     jedno świadczenie o tej samej nazwie).
                     4. NIE pisz o telefonie, jeśli go nie ma w danych.
@@ -112,7 +113,9 @@ class LLMResponder:
                     6. Jeśli brak danych, odpisz uprzejmie,
                     że obecnie nie znaleziono wolnych terminów.
                     7. NIE podawaj informacji spoza danych NFZ.
-                    8. W przypadku braku danych o beneficie poproś
+                    8. W przypadku gdy podany jest dystans do placówki masz
+                    obowiązek go podać oraz zaznaczyć że jest to dystans przybliżony.
+                    9. W przypadku braku danych o beneficie poproś
                     o doprecyzowanie pytania.""",
                 ),
                 ("user", "Pacjent pyta: {question}\nDane z NFZ:\n{context}"),
@@ -136,6 +139,7 @@ class LLMResponder:
                         "phone": attr.get("phone"),
                         "pierwszy termin": dates.get("date"),
                         "aktualizacja": attr.get("updated_at"),
+                        "dystans": d.get("distance_km"),
                     }
                 )
         except Exception as e:
