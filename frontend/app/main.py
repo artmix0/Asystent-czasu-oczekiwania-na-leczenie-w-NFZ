@@ -12,6 +12,16 @@ st.set_page_config(
     page_title="Asystent czasu oczekiwania na leczenie w NFZ", page_icon="🏥"
 )
 
+st.title("🏥 Asystent Kolejek NFZ")
+st.markdown(
+    """
+    ### Znajdź najszybsze terminy leczenia
+    Wpisz poniżej, jakiego specjalisty szukasz lub o jaką procedurę chcesz zapytać.
+    Asystent przeanalizuje aktualne dane z bazy NFZ.
+"""
+)
+st.divider()
+
 
 @st.cache_resource
 def get_chat_history():
@@ -100,5 +110,4 @@ if prompt:
 
             st.rerun()
 
-    # 3. Zapisujemy odpowiedź asystenta
     st.session_state.messages.append({"role": "assistant", "content": final_response})
