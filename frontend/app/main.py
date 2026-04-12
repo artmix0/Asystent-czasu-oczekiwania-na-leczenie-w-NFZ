@@ -1,6 +1,5 @@
 import logging
 
-import httpx
 import requests
 import streamlit as st
 from streamlit_js_eval import get_geolocation
@@ -53,7 +52,9 @@ else:
 loc = get_geolocation() if geo or saved_geo else None
 print(loc)
 
-if prompt := st.chat_input("Np. Gdzie znajdę kardiologa w Poznaniu?"):
+prompt = st.chat_input("Np. Gdzie znajdę kardiologa w Poznaniu?")
+
+if prompt:
     st.chat_message("user").markdown(prompt)
     st.session_state.messages.append({"role": "user", "content": prompt})
 
@@ -63,7 +64,6 @@ if prompt := st.chat_input("Np. Gdzie znajdę kardiologa w Poznaniu?"):
 
         with st.spinner("Analizuję Twoje pytanie..."):
             payload = {"question": prompt}
-
             if loc:
                 payload["localization"] = loc.get("coords")
 
@@ -71,9 +71,10 @@ if prompt := st.chat_input("Np. Gdzie znajdę kardiologa w Poznaniu?"):
                 response = requests.post(
                     "http://backend:8000/zapytanie",
                     json=payload,
-                    timeout=15,
+                    timeout=60,
                     stream=True,
                 )
+                response.raise_for_status()
 
                 for chunk in response.iter_content(
                     chunk_size=None, decode_unicode=True
@@ -83,19 +84,21 @@ if prompt := st.chat_input("Np. Gdzie znajdę kardiologa w Poznaniu?"):
                         placeholder.markdown(final_response + "▌")
 
                 placeholder.markdown(final_response)
+                st.session_state.messages.append(
+                    {"role": "assistant", "content": final_response}
+                )
 
-            except httpx.HTTPStatusError as e:
-                st.error(f"Błąd NFZ (Kod: {e.response.status_code}): {e}")
-                logger.error(f"Status błędu: {e.response.status_code}")
-            except httpx.RequestError as e:
-                st.error(f"Błąd połączenia z API: {e}")
-                logger.error(f"Nie udało się wysłać żądania: {e}")
             except Exception as e:
-                st.error(f"Wystąpił nieoczekiwany błąd: {e}")
                 logger.error(f"Błąd: {e}")
-            except requests.exceptions.RequestException as e:
-                st.error(f"Błąd serwera: {response.status_code} {e}")
-                final_response = "Nie udało się uzyskać odpowiedzi."
+                error_msg = (
+                    "Przepraszam, wystąpił problem. Spróbuj zadać pytanie ponownie."
+                )
+                placeholder.markdown(error_msg)
+                st.session_state.messages.append(
+                    {"role": "assistant", "content": error_msg}
+                )
+
+            st.rerun()
 
     # 3. Zapisujemy odpowiedź asystenta
     st.session_state.messages.append({"role": "assistant", "content": final_response})

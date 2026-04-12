@@ -32,84 +32,81 @@ class GenerateAnswerRequest(BaseModel):
 
 @app.post("/zapytanie")
 async def ask_assistant(request: UserRequest):
-    try:
-        criteria = await extractor.extract_criteria(request.question)
-    except Exception as e:
-        logger.error(f"LLM Extraction Error: {e}")
-        return StreamingResponse(
-            responder.generate_answer(
-                request.question + " (Błąd ekstrakcji danych)", []
-            ),
-            media_type="text/plain",
+    async def error_stream():
+        yield (
+            "Przepraszam, wystąpił problem przy przygotowywaniu odpowiedzi. "
+            "Proszę spróbować ponownie."
         )
 
-    if request.localization:
-        logger.info(request.localization)
-        try:
+    try:
+        criteria = await extractor.extract_criteria(request.question)
+        benefit = criteria.get("benefit")
+        city_name = criteria.get("city")
+        province_name = criteria.get("province")
+        needs_location = criteria.get("needs_location")
+
+        loc_info = None
+        if request.localization:
             loc_info = geolocator.get_geolocation_reverse(
                 request.localization.get("latitude"),
                 request.localization.get("longitude"),
             )
-            logger.info(f"Zidentyfikowana lokalizacja: {loc_info}")
-        except Exception as e:
-            logger.error(f"Błąd podczas geolokalizacji: {e}")
 
-    benefit_search = criteria.get("benefit", "")
+        if province_name and not city_name and not needs_location:
+            logger.info(f"Szukanie ogólne w województwie: {province_name}")
+            queues = await nfz_queues.get_queues(benefit, province=province_name)
 
-    if not benefit_search:
-        return StreamingResponse(
-            responder.generate_answer(request.question, []), media_type="text/plain"
-        )
+        elif city_name or request.localization:
+            origin_city = city_name or (loc_info.get("city") if loc_info else None)
+            logger.info(f"Szukanie lokalne wokół: {origin_city}")
 
-    province_name = criteria.get("province", None)
+            city_loc = geolocator.get_city_coords(origin_city)
+            province_name = geolocator.get_geolocation_reverse(
+                city_loc[0], city_loc[1]
+            )["province"]
 
-    if not province_name:
-        logger.warning("Nie podano województwa, wyszukuje automatycznie")
+            queues = await nfz_queues.get_queues(
+                benefit, province=province_name, city=origin_city
+            )
 
-        province_name = loc_info.get("province") if loc_info else ""
+            if not any(queues.values()) if isinstance(queues, dict) else not queues:
+                nearby_provinces = geolocator.get_nearby_provinces(origin_city)
+                wider_data = await nfz_queues.get_queues(
+                    benefit, province=nearby_provinces
+                )
 
-    city_name = criteria.get("city", None)
+                all_providers = []
+                for prov_list in (
+                    wider_data.values()
+                    if isinstance(wider_data, dict)
+                    else [wider_data]
+                ):
+                    all_providers.extend(prov_list)
 
-    if not city_name:
-        logger.info("Nie podano miejscowości, wyszukuję automatycznie")
+                cascade_res = geolocator.find_nearby_cascade(
+                    origin_city, all_providers, 50
+                )
+                queues = cascade_res.get("results", [])
 
-        city_name = loc_info.get("city") if loc_info else ""
+        else:
+            return StreamingResponse(
+                responder.generate_answer(
+                    GenerateAnswerRequest(
+                        question=request.question, nfz_data=[], loc_data=None
+                    )
+                ),
+                media_type="text/plain",
+            )
 
-    try:
-        queues = await nfz_queues.get_queues(benefit_search, province_name, city_name)
-    except Exception as e:
-        logger.error(f"NFZ Queues Error: {e}")
         return StreamingResponse(
             responder.generate_answer(
-                request.question + " (Błąd pobierania kolejek)", []
+                GenerateAnswerRequest(
+                    question=request.question, nfz_data=queues, loc_data=loc_info
+                )
             ),
             media_type="text/plain",
         )
 
-    logger.info(queues)
-
-    if not any(queues.values()):
-        logger.info(f"Brak wyników w {city_name}. Przeszukuję promień 50km.")
-
-        provinces_list = geolocator.get_nearby_provinces(city_name)
-
-        queues = await nfz_queues.get_queues(benefit_search, provinces_list)
-
-        cascade_response = geolocator.find_nearby_cascade(
-            city_name=city_name, all_providers=queues, max_radius_km=50
-        )
-
-        if cascade_response.get("results"):
-            queues = cascade_response["results"]
-            logger.info(f"Znaleziono wyniki w promieniu 50km {queues}")
-
-    return StreamingResponse(
-        responder.generate_answer(
-            GenerateAnswerRequest(
-                question=request.question,
-                nfz_data=queues,
-                loc_data=request.localization,
-            )
-        ),
-        media_type="text/plain",
-    )
+    except Exception as e:
+        logger.error(f"Krytyczny błąd endpointu /zapytanie: {e}")
+        return StreamingResponse(error_stream(), media_type="text/plain")

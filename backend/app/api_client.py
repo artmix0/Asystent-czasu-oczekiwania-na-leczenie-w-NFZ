@@ -28,7 +28,9 @@ logger = logging.getLogger(__name__)
 
 
 class NFZClient:
-    BASE_URL = "https://api.nfz.gov.pl/app-itl-api/queues"
+    def __init__(self):
+        self.semaphore = asyncio.Semaphore(3)
+        self.BASE_URL = "https://api.nfz.gov.pl/app-itl-api/queues"
 
     async def get_queues(self, user_input: str, province: str | list, city: str = ""):
         print(
@@ -54,15 +56,17 @@ class NFZClient:
         if isinstance(province_code, str):
             province_code = [province_code]
 
-        async with httpx.AsyncClient() as client:
-            tasks = [
-                self.fetch_province_data(client, prov, benefit, locality)
-                for prov in province_code
-            ]
+        async with self.semaphore:
+            async with httpx.AsyncClient() as client:
+                tasks = [
+                    self.fetch_province_data(client, prov, benefit, locality)
+                    for prov in province_code
+                ]
 
-            responses = await asyncio.gather(*tasks)
+                responses = await asyncio.gather(*tasks)
 
-            final_results = {prov: res for prov, res in responses}
+                final_results = {prov: res for prov, res in responses}
+            await asyncio.sleep(0.5)
 
         return final_results
 

@@ -39,35 +39,44 @@ class Geolocator:
         return None
 
     def find_nearby_cascade(
-        self, city_name: str, all_providers: dict, max_radius_km: int = 50
+        self, city_name: str, all_providers: dict | list, max_radius_km: int = 50
     ):
         origin = self.get_city_coords(city_name)
         if not origin:
             return {"error": "Nie znaleziono miejscowości", "results": []}
 
-        results_with_dist = []
-        logger.info(all_providers)
-        for p in all_providers:
-            for i in range(len(all_providers[p])):
-                logger.info(all_providers[p])
+        flat_list = []
+        if isinstance(all_providers, dict):
+            for prov_list in all_providers.values():
+                if isinstance(prov_list, list):
+                    flat_list.extend(prov_list)
+        else:
+            flat_list = all_providers
 
-                p_lat = all_providers[p][i].get("attributes").get("latitude")
-                p_lon = all_providers[p][i].get("attributes").get("longitude")
+        results_with_dist = []
+
+        for item in flat_list:
+            try:
+                attr = item.get("attributes", item)
+                p_lat = attr.get("latitude")
+                p_lon = attr.get("longitude")
 
                 if p_lat is not None and p_lon is not None:
                     dist = geodesic(origin, (float(p_lat), float(p_lon))).km
-                    all_providers[p][i]["distance_km"] = round(dist, 1)
-                    results_with_dist.append(all_providers[p][i])
+                    item["distance_km"] = round(dist, 1)
 
-        logger.info(results_with_dist)
+                    if dist <= max_radius_km:
+                        results_with_dist.append(item)
+            except Exception as e:
+                logger.warning(f"Pominięto placówkę przy liczeniu dystansu: {e}")
+                continue
 
-        filtered = [p for p in results_with_dist if p["distance_km"] <= max_radius_km]
+        results_with_dist.sort(key=lambda x: x.get("distance_km", 999))
 
-        logger.info(filtered)
         return {
             "search_radius": max_radius_km,
             "city_origin": origin,
-            "results": filtered,
+            "results": results_with_dist,
         }
 
     def get_nearby_provinces(self, city_name: str, radius_km: int = 50):
