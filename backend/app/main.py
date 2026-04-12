@@ -106,21 +106,27 @@ async def ask_assistant(request: UserRequest):
         else:
             return StreamingResponse(
                 responder.generate_answer(
-                    GenerateAnswerRequest(
-                        question=request.question, nfz_data=[], loc_data=None
-                    )
+                    GenerateAnswerRequest(question=request.question, nfz_data=[])
                 ),
                 media_type="text/plain",
             )
 
-        return StreamingResponse(
-            responder.generate_answer(
-                GenerateAnswerRequest(
-                    question=request.question, nfz_data=queues, loc_data=loc_info
-                )
-            ),
-            media_type="text/plain",
-        )
+        if loc_info:
+            return StreamingResponse(
+                responder.generate_answer(
+                    GenerateAnswerRequest(
+                        question=request.question, nfz_data=queues, loc_data=loc_info
+                    )
+                ),
+                media_type="text/plain",
+            )
+        else:
+            return StreamingResponse(
+                responder.generate_answer(
+                    GenerateAnswerRequest(question=request.question, nfz_data=queues)
+                ),
+                media_type="text/plain",
+            )
 
     except Exception as e:
         logger.error(f"Krytyczny błąd endpointu /zapytanie: {e}")

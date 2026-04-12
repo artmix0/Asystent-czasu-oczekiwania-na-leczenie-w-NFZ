@@ -152,16 +152,11 @@ class LLMResponder:
                     all_items.extend(prov_list)
             else:
                 all_items = request.nfz_data
-
-            all_items.sort(
-                key=lambda x: (
-                    x.get("distance_km", 999),
-                    x.get("attributes", {}).get("dates", {}).get("date", "9999-12-31"),
-                )
-            )
+            logger.info(all_items)
 
             simplified_data = []
             for item in all_items:
+                logger.info(item)
                 attr = item.get("attributes", {})
                 dates = attr.get("dates", {})
                 termin = dates.get("date")
